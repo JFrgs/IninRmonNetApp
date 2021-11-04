@@ -1,0 +1,10 @@
+version: "3.6"
+
+services:
+
+  rmonnetapp:
+    image: rmonnetapp:latest
+    ports:
+      - "80:80"
+    env_file:
+      - .env
