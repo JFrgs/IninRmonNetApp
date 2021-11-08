@@ -1,20 +1,20 @@
 class Config:
 
     # 5G NEF API endpoint settings
-    NET_APP_NAME   = 'qmonTest'
+    NET_APP_NAME   = 'test'
     NET_API_PROT   = 'http'
-    NET_API_HOST   = '192.168.202.39'
+    NET_API_HOST   = '0.0.0.0'
     NET_API_PORT   = '8888'
 
-    NET_API_USER   = 'admin@my-email.com'
-    NET_API_PASS   = 'pass'
+    NET_API_USER   = 'test'
+    NET_API_PASS   = 'test'
 
     # Change if using separate host
-    CALLBACK_HOST  = NET_API_HOST
+    CALLBACK_HOST  = '0.0.0.0'
     CALLBACK_PORT  = '80'
 
     # Set rMON Collector host
-    COLLECTOR_HOST   = 'https://evolved5g-collector.qmon.eu'
+    COLLECTOR_HOST   = 'https://test.com'
     COLLECTOR_USER   = 'test'
     COLLECTOR_PASS   = 'test'
 
