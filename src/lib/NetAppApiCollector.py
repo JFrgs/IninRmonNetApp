@@ -9,6 +9,7 @@ import pytz
 from datetime import datetime
 from requests.auth import HTTPBasicAuth
 from NetAppApiConfig import Config
+from lib.NetAppNotify import Notify
 
 class ApiCollector (threading.Thread):
 
@@ -19,6 +20,10 @@ class ApiCollector (threading.Thread):
         self.q = queue.Queue()
         self.log.debug(Config.LOG_RMON_COL, "Init thread")
 
+        # Init MN notify 
+        self.notify = Notify(log=self.log, config=self.config)
+        self.notify.start()
+
     def run(self):
 
         self.log.debug(Config.LOG_RMON_COL, "Processing queue")
@@ -28,10 +33,9 @@ class ApiCollector (threading.Thread):
             self.log.debug(Config.LOG_RMON_COL, f'{item}')
 
             event = item[0]
-            supi = item[1]
-            supi_detailed = item[2]
+            external_id = item[1]
 
-            self.jsonUploadToCollector(event, supi, supi_detailed)
+            self.jsonUploadToCollector(event, external_id)
 
             self.q.task_done()
 
@@ -49,60 +53,166 @@ class ApiCollector (threading.Thread):
         except:
             self.log.debug(Config.LOG_RMON_COL, 'File can not be moved to arhive: ' + file_name)
         
-
-    def saveToJsonFile(self, json_data, file_name=Config.JSON_FILE_NAME):   
-        self.log.debug(json_data) 
+    def saveToJsonFile(self, json_data, file_name):   
         with open(file_name, 'w') as payload:
             json.dump(json_data, payload)
 
-    def jsonUploadToCollector(self, loc_update_data, supi, supi_details_json):
-        #self.log.debug(Config.LOG_RMON_COL, loc_update_data)
-        loc_json = json.loads(loc_update_data)
-        #supi_details_json = supi_details
-        self.log.debug(Config.LOG_RMON_COL, str(loc_json))
-        #self.log.debug(Config.LOG_RMON_COL, supi)
-        self.log.debug(Config.LOG_RMON_COL, str(supi_details_json))
+    def jsonUploadToCollector(self, update_data, externalId):
 
+        data_json = json.loads(update_data)
+        self.log.debug(Config.LOG_RMON_COL, "Prepare JSON for UPLOAD: " + str(data_json))
 
+        # List of measurements
         data = []
 
-        try:
-            for parameter in loc_json['locationInfo']:
-                #self.log.debug(Config.LOG_RMON_COL, i)
-                #self.log.debug(Config.LOG_RMON_COL, loc_json['locationInfo'][i])
+        # MN detailed data JSON
+        mn_data = {}
 
+        # Report event type, use in file names
+        report_event_type = "unknown"
+
+        # LOCATION
+        if 'locationInfo' in data_json:
+            report_event_type = "location"
+
+            try:
+                for parameter in data_json['locationInfo']:
+
+                    timestamp = datetime.now().astimezone(pytz.timezone('CET')).replace().isoformat(timespec='milliseconds')
+
+                    # Fill MN detailed JSON
+                    if parameter == 'cellId':
+                        mn_data['5G Cell ID'] = data_json['locationInfo'][parameter]
+                    elif parameter == 'enodeBId':
+                        mn_data['5G gNB'] = data_json['locationInfo'][parameter]
+
+                    tmp_data = {
+                        'api_type': 'NEF',
+                        'api_version': '1',
+                        'report_type': data_json['monitoringType'],
+                        'parameter': parameter,
+                        'param_value_type': 'string',
+                        'param_value_string': data_json['locationInfo'][parameter],
+                        'param_value_float': '',
+                        'param_value_unit': '',
+                        'timestamp': timestamp,
+                        'ue_id_type': 'External ID',
+                        'ue_id_value': externalId,
+                    }
+                    data.append(tmp_data)
+
+                # Put MN detailed JSON into Q
+                self.log.debug(Config.LOG_RMON_COL, "MN detailed data: " + json.dumps(mn_data))
+                external_id_list = [mn_data, externalId]
+                self.notify.q.put(external_id_list)
+                self.log.debug(Config.LOG_RMON_COL, "Put in queue")
+            except:
+                self.log.debug(Config.LOG_RMON_COL, "No location data present.")
+
+        # QoS
+        if 'eventReports' in data_json:
+            report_event_type = "qos"
+
+            try:
                 timestamp = datetime.now().astimezone(pytz.timezone('CET')).replace().isoformat(timespec='milliseconds')
+        
+                for parameter in data_json['eventReports']:
 
-                tmp_data = {
-                    'api_type': 'NEF',
-                    'api_version': '1',
-                    'report_type': loc_json['monitoringType'],
-                    'parameter': parameter,
-                    'param_value_type': 'string',
-                    'param_value_string': loc_json['locationInfo'][parameter],
-                    'param_value_float': '',
-                    'param_value_unit': '',
-                    'timestamp': timestamp,
-                    'ue_id_type': 'SUPI',
-                    'ue_id_value': supi,
-                    'ue_name': supi_details_json['name'],
-                    'ue_ip_address_v4': supi_details_json['ip_address_v4'],
-                    'ue_ip_address_v6': supi_details_json['ip_address_v6'],
-                    'ue_mac_address': supi_details_json['mac_address'],
-                    'operator_name': supi_details_json['dnn'],
-                    'plmn': str(supi_details_json['mcc']).zfill(3)+str(supi_details_json['mnc']).zfill(2),
-                    'ue_latitude': supi_details_json['latitude'],
-                    'ue_longitude': supi_details_json['longitude'],
-                    'ue_speed': supi_details_json['speed'],
-                }
-                data.append(tmp_data)
-        except:
-            self.log.debug(Config.LOG_RMON_COL, "No location data present.")
+                    # Fill MN detailed JSON
+                    mn_data['5G QoS Status'] =  parameter["event"]
+
+                    # ipv4Addr
+                    tmp_data = {
+                        'api_type': 'NEF',
+                        'api_version': '1',
+                        'report_type': parameter["event"],
+                        'parameter': "ipv4Addr",
+                        'param_value_type': 'string',
+                        'param_value_string': data_json["ipv4Addr"],
+                        'param_value_float': '',
+                        'param_value_unit': '',
+                        'timestamp': timestamp,
+                        'ue_id_type': 'External ID',
+                        'ue_id_value': externalId,
+                        }
+                    data.append(tmp_data) 
+
+                    # appliedQosRef
+                    tmp_data = {
+                        'api_type': 'NEF',
+                        'api_version': '1',
+                        'report_type': parameter["event"],
+                        'parameter': "appliedQosRef",
+                        'param_value_type': 'string',
+                        'param_value_string': str(parameter["appliedQosRef"]),
+                        'param_value_float': '',
+                        'param_value_unit': '',
+                        'timestamp': timestamp,
+                        'ue_id_type': 'External ID',
+                        'ue_id_value': externalId,
+                        }
+                    data.append(tmp_data) 
+
+                    # ulDelays, dlDelays, rtDelays
+                    for report in parameter["qosMonReports"]:
+                        for key, value in report.items():
+                            tmp_data = {
+                                'api_type': 'NEF',
+                                'api_version': '1',
+                                'report_type': parameter["event"],
+                                'parameter': key,
+                                'param_value_type': 'float',
+                                'param_value_string': '',
+                                'param_value_float': str(value[0]),
+                                'param_value_unit': '',
+                                'timestamp': timestamp,
+                                'ue_id_type': 'External ID',
+                                'ue_id_value': externalId,
+                                }
+                            data.append(tmp_data)
+
+                    # duration, totalVolume, downlinkVolume, uplinkVolume
+                    for key, value in parameter["accumulatedUsage"].items():
+
+                        if value == 'None' or value == 'null':
+                            continue
+
+                        if key == 'duration':
+                            unit = ''
+                        else:
+                            unit = 'byte'
+
+                        tmp_data = {
+                            'api_type': 'NEF',
+                            'api_version': '1',
+                            'report_type': parameter["event"],
+                            'parameter': key,
+                            'param_value_type': 'float',
+                            'param_value_string': '',
+                            'param_value_float': str(value),
+                            'param_value_unit': unit,
+                            'timestamp': timestamp,
+                            'ue_id_type': 'External ID',
+                            'ue_id_value': externalId,
+                            }
+                        data.append(tmp_data)
+
+                # Put MN detailed JSON into Q
+                self.log.debug(Config.LOG_RMON_COL, "MN detailed data: " + json.dumps(mn_data))
+                external_id_list = [mn_data, externalId]
+                self.notify.q.put(external_id_list)
+                self.log.debug(Config.LOG_RMON_COL, "Put in queue")
+            except:
+                self.log.debug(Config.LOG_RMON_COL, "No qos data present.")
 
         json_data = {'measurements':data}
 
         # Init file name
-        file_name = '5g_nef_api_' + supi + '_' +str(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) + ".json"  
+        #file_name = '5g_nef_api_' + externalId + '_' +str(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) + ".json"  
+        
+        file_name = '5g_nef_api_' + report_event_type + "_" + externalId.replace('@','_').replace('.com','_com') + '_' +str(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) + ".json"  
+
+        self.log.debug(Config.LOG_RMON_COL, str(json_data))
 
         # Save data to JSON file
         self.saveToJsonFile(json_data, file_name)
@@ -110,7 +220,7 @@ class ApiCollector (threading.Thread):
         # Upload data to server
         self.runUploadFile(file_name)
 
-    def runUploadFile(self, file_name=Config.JSON_FILE_NAME):   
+    def runUploadFile(self, file_name):   
 
         exception = ""
 
@@ -120,12 +230,12 @@ class ApiCollector (threading.Thread):
             startTransferAt = time.time()
 
             # Post request using basic http auth
-            urlPut = Config.COLLECTOR_HOST + '/upload.php?filename=' + file_name + '&filetype=resultapi'
+            urlPut = self.config.COLLECTOR_HOST + '/upload.php?filename=' + file_name + '&filetype=resultapi'
 
             with open(file_name, 'rb') as payload: 
                 r = requests.put(urlPut, 
                             data=payload, 
-                            auth=HTTPBasicAuth(Config.COLLECTOR_USER, Config.COLLECTOR_PASS), timeout=10)
+                            auth=HTTPBasicAuth(self.config.COLLECTOR_USER, self.config.COLLECTOR_PASS), timeout=10)
 
             # Upload duration
             stopTransferAt = time.time()
