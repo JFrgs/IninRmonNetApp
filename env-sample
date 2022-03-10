@@ -12,3 +12,6 @@ CALLBACK_PORT=80
 COLLECTOR_HOST=https://test.com
 COLLECTOR_USER=test
 COLLECTOR_PASS=test
+# MN API host
+MN_HOST=http://test.com
+MN_TOKEN=""
