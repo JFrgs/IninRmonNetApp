@@ -12,6 +12,7 @@ from evolved5g.swagger_client.models import Token
 from evolved5g.sdk import LocationSubscriber
 from evolved5g.swagger_client.rest import ApiException
 from evolved5g.sdk import QosAwareness
+from evolved5g.sdk import ConnectionMonitor
 from evolved5g.swagger_client import UsageThreshold
 from evolved5g.swagger_client.api.qo_s_information_api import QoSInformationApi
 
@@ -37,17 +38,20 @@ class ApiClient:
 
     def __init__(self, token=None, type=None, log='', config={}):
 
-        self.config           = config
-        self.log              = log
-        self.token            = token
-        self.type             = type
-        self.ipv4             = {}
-        self.monSubId         = {}
-        self.qosSubId         = {}
+        self.config            = config
+        self.log               = log
+        self.token             = token
+        self.type              = type
+        self.ipv4              = {}
+        self.monLocSubId       = {}
+        self.monConnLossSubId  = {}
+        self.monConnReachSubId = {}
+        self.qosSubId          = {}
 
         # Define static paths and urls
         self.CALLBACK_PATH   = '/api/v1/utils/monitoring/callback/'
-        self.CALLBACK_MON    = self.CALLBACK_PATH + 'mon/'
+        self.CALLBACK_LOC    = self.CALLBACK_PATH + 'loc/'
+        self.CALLBACK_CON    = self.CALLBACK_PATH + 'con/'
         self.CALLBACK_QOS    = self.CALLBACK_PATH + 'qos/'
         self.NET_API_URL     = self.config.NET_API_PROT + '://' + self.config.NET_API_HOST + ':' + self.config.NET_API_PORT
         self.url_callback    = ''
@@ -58,11 +62,12 @@ class ApiClient:
 
         # Check if token needs to be obtained again
         if self.token == None:
-            self.token, self.type = self.loginNefGetTokenSDK()
+            self.token, self.type = self.register_netapp_to_nef()
 
 
-    def loginNefGetTokenSDK(self):
-
+    def register_netapp_to_nef(self):
+        # loginNefGetTokenSDK
+        # https://github.com/EVOLVED-5G/dummy-netapp/blob/main/pythonnetapp/netapp_to_nef.py
         api_client = swagger_client.ApiClient(configuration=self.configuration)
         api_client.select_header_content_type(["application/x-www-form-urlencoded"])
         api = LoginApi(api_client)
@@ -72,7 +77,7 @@ class ApiClient:
             self.log.debug(Config.LOG_NEF_SDK, 'Token: ' + str(token))
         except Exception as e:
             self.log.error(Config.LOG_ERROR, str(e))
-            raise ApiError("loginNefGetTokenSDK -> " + str(e))
+            raise ApiError("register_netapp_to_nef -> " + str(e))
             
 
         return token.access_token, token.token_type
@@ -89,35 +94,36 @@ class ApiClient:
             None
 
         # Generate new token again
-        self.token, self.type = self.loginNefGetTokenSDK()
+        self.token, self.type = self.register_netapp_to_nef()
         if self.token != None: 
             return True
         
         return False
 
-    def createMonitorEventSubsLocationSDK(self, externalId):
+    def createMonitorEventSubsConnectionLossSDK(self, externalId):
 
         # Callback Monitor Location URL
-        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_MON + externalId
-        self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Location URL: ' + url_callback)
+        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_CON + externalId
+        self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Connection URL: ' + url_callback)
 
         # Expire time set, 24h from now
         expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
 
-        location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
+        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
         try:
-            # Create subscription                                               
-            result = location_subscriber.create_subscription(self.config.NET_APP_NAME,
-                                                            externalId,
-                                                            url_callback,
-                                                            10000,
-                                                            expireTime)                           
+            # Create subscription   
+            result = connection_subscriber.create_subscription(netapp_id=self.config.NET_APP_NAME,
+                            external_id=externalId,
+                            notification_destination=url_callback,monitoring_type=ConnectionMonitor.MonitoringType.INFORM_WHEN_NOT_CONNECTED,
+                            wait_time_before_sending_notification_in_seconds=1,
+                            maximum_number_of_reports=1000,
+                            monitor_expire_time=expireTime)     
             
             self.ipv4[externalId] = result.ipv4_addr
             self.log.debug(Config.LOG_NEF_SDK, 'Retrieving IPv4 address: ' + self.ipv4[externalId])
             subs_id = result.link.split('/')[-1]
-            self.log.debug(Config.LOG_NEF_SDK, 'Monitoring Location Event Subscription OK, ID: ' + subs_id)
-            self.monSubId[externalId] = subs_id
+            self.log.debug(Config.LOG_NEF_SDK, 'Monitoring Connection Event Subscription OK, ID: ' + subs_id)
+            self.monConnLossSubId[externalId] = subs_id
 
         except Exception as e:
             self.log.error(Config.LOG_ERROR, str(e))
@@ -125,7 +131,75 @@ class ApiClient:
                 raise MonSubError ("UE does not exist!")
             else:
                 self.log.error(Config.LOG_ERROR, str(e))
-                raise ApiError("createMonitorEventSubsLocationSDK -> " + str(e))
+                raise ApiError("createMonitorEventSubsConnectionLossSDK -> " + str(e))
+
+    def createMonitorEventSubsConnectionReachabilitySDK(self, externalId):
+
+        # Callback Monitor Location URL
+        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_CON + externalId
+        self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Connection URL: ' + url_callback)
+
+        # Expire time set, 24h from now
+        expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
+
+        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        try:
+            # Create subscription   
+            result = connection_subscriber.create_subscription(netapp_id=self.config.NET_APP_NAME,
+                            external_id=externalId,
+                            notification_destination=url_callback,monitoring_type=ConnectionMonitor.MonitoringType.INFORM_WHEN_CONNECTED,
+                            wait_time_before_sending_notification_in_seconds=1,
+                            maximum_number_of_reports=1000,
+                            monitor_expire_time=expireTime)     
+            
+            self.ipv4[externalId] = result.ipv4_addr
+            self.log.debug(Config.LOG_NEF_SDK, 'Retrieving IPv4 address: ' + self.ipv4[externalId])
+            subs_id = result.link.split('/')[-1]
+            self.log.debug(Config.LOG_NEF_SDK, 'Monitoring Connection Event Subscription OK, ID: ' + subs_id)
+            self.monConnReachSubId[externalId] = subs_id
+
+        except Exception as e:
+            self.log.error(Config.LOG_ERROR, str(e))
+            if e.status==409:
+                raise MonSubError ("UE does not exist!")
+            else:
+                self.log.error(Config.LOG_ERROR, str(e))
+                raise ApiError("createMonitorEventSubsConnectionReachabilitySDK -> " + str(e))
+
+    def monitor_subscription(self, externalId):
+        # createMonitorEventSubsLocationSDK
+
+        # Callback Monitor Location URL
+        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_LOC + externalId
+        self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Location URL: ' + url_callback)
+
+        # Expire time set, 24h from now
+        expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
+
+        location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
+        try:
+            # Create subscription                                     
+            result = location_subscriber.create_subscription(self.config.NET_APP_NAME,
+                                                            externalId,
+                                                            url_callback,
+                                                            10000,
+                                                            expireTime) 
+ 
+                                 
+            
+            self.ipv4[externalId] = result.ipv4_addr
+            self.log.debug(Config.LOG_NEF_SDK, 'Retrieving IPv4 address: ' + self.ipv4[externalId])
+            subs_id = result.link.split('/')[-1]
+            self.log.debug(Config.LOG_NEF_SDK, 'Monitoring Location Event Subscription OK, ID: ' + subs_id)
+            self.monLocSubId[externalId] = subs_id
+
+        except Exception as e:
+            self.log.error(Config.LOG_ERROR, str(e))
+            if e.status==409:
+                raise MonSubError ("UE does not exist!")
+            else:
+                self.log.error(Config.LOG_ERROR, str(e))
+                raise ApiError("monitor_subscription -> " + str(e))
 
     def readActiveAndDeleteQosSubscriptionsSDK(self):
 
@@ -142,12 +216,13 @@ class ApiClient:
             self.qosSubId = {}
         except ApiException as e:
             if e.status == 404:
-                self.log.debug(Config.LOG_NEF_SDK, "No active subscriptions found")
+                self.log.debug(Config.LOG_NEF_SDK, "No active QoS subscriptions found")
             else: 
                 self.log.error(Config.LOG_ERROR, str(e))
                 raise ApiError("readActiveAndDeleteQosSubscriptionsSDK -> " + str(e))
 
-    def createMonitorEventSubsQosSDK(self, externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold):
+    def sessionqos_subscription(self, externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold, qos_reporting_mode):
+        # createMonitorEventSubsQosSDK
 
         qos_awereness = QosAwareness(self.NET_API_URL, self.token)
 
@@ -159,6 +234,12 @@ class ApiClient:
                                         downlink_volume=0,  
                                         uplink_volume=0  
                                         )
+
+        if qos_reporting_mode == 'EVENT_TRIGGERED':
+            reporting_mode = QosAwareness.EventTriggeredReportingConfiguration(wait_time_in_seconds=10)
+        else:
+            reporting_mode = QosAwareness.PeriodicReportConfiguration(repetition_period_in_seconds=10)
+
 
         url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_QOS + externalId
 
@@ -174,7 +255,12 @@ class ApiClient:
                 usage_threshold=usage_threshold,
                 qos_monitoring_parameter=QosAwareness.QosMonitoringParameter(qos_monitoring_parameter),
                 threshold=qos_parameter_threshold,
-                wait_time_between_reports=10)
+                # BREAKING CHANGE - v0.8.0 
+                #reporting_mode= QosAwareness.EventTriggeredReportingConfiguration(wait_time_in_seconds=10))
+                #reporting_mode= QosAwareness.PeriodicReportConfiguration(repetition_period_in_seconds=10))
+                reporting_mode=reporting_mode)
+                #wait_time_between_reports=10)
+
         except Exception as e:
             self.log.error(Config.LOG_ERROR, str(e))
             raise QoSSubError (str(e))
@@ -193,37 +279,92 @@ class ApiClient:
     def readActiveAndDeleteLocSubscriptionsSDK(self):
 
         location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
-        subs_list = []
 
         try:
             # Get all subscriptions
             all_subscriptions = location_subscriber.get_all_subscriptions(self.config.NET_APP_NAME, 0, 100)
 
-            # Delete all subscriptions
             for subscription in all_subscriptions:
-                subscription_id = subscription.link.split("/")[-1]
-                subs_list.append(subscription_id)
-                self.deleteActiveSubscriptionsSDK(subscription_id)
 
-            self.monSubId = {}    
-        except Exception as e:
-            None
+                # Check, Loc and Con monitor has same subscriptions list
+                if id not in self.monConnLossSubId.values() or id not in self.monConnReachSubId.values():
+                    id = subscription.link.split("/")[-1]
+                    self.log.debug(Config.LOG_NEF_SDK, "Deleting Location subscription with ID: " + id)
+                    location_subscriber.delete_subscription(self.config.NET_APP_NAME, id)
+                
+            self.monLocSubId = {}
+        except ApiException as e:
+            if e.status == 404:
+                self.log.debug(Config.LOG_NEF_SDK, "No active Location subscriptions found")
+            else: 
+                self.log.error(Config.LOG_ERROR, str(e))
+                raise ApiError("readActiveAndDeleteLocSubscriptionsSDK -> " + str(e))
 
-        return subs_list
+    def readActiveAndDeleteConnectionSubscriptionsSDK(self):
+
+        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        try:
+            # Get all subscriptions
+            all_subscriptions = connection_subscriber.get_all_subscriptions(self.config.NET_APP_NAME, 0, 100)
+
+            for subscription in all_subscriptions:
+                id = subscription.link.split("/")[-1]
+
+                # Check, Loc and Con monitor has same subscriptions list
+                if id not in self.monLocSubId.values():
+                    self.log.debug(Config.LOG_NEF_SDK, "Deleting Connection subscription with ID: " + id)
+                    connection_subscriber.delete_subscription(self.config.NET_APP_NAME, id)
+                
+            self.monConnLossSubId  = {}    
+            self.monConnReachSubId = {} 
+        except ApiException as e:
+            if e.status == 404:
+                self.log.debug(Config.LOG_NEF_SDK, "No active Connection subscriptions found")
+            else: 
+                self.log.error(Config.LOG_ERROR, str(e))
+                raise ApiError("readActiveAndDeleteLocSubscriptionsSDK -> " + str(e))
         
-    def deleteActiveMonSubscriptionSDK(self, external_id):
+    def deleteActiveMonLocSubscriptionSDK(self, external_id):
 
         location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
                     
         try:
-            if external_id in self.monSubId:
-                subscription = self.monSubId[external_id]
+            if external_id in self.monLocSubId:
+                subscription = self.monLocSubId[external_id]
 
                 if subscription:
                     # Delete subscription
                     location_subscriber.delete_subscription(self.config.NET_APP_NAME, subscription)
                     self.log.debug(Config.LOG_NEF_SDK, "Deleting Monitor Location subscription with ID: " + subscription)
-                    del self.monSubId[external_id]
+                    del self.monLocSubId[external_id]
+        except Exception as e:
+            None
+
+    def deleteActiveMonConSubscriptionSDK(self, external_id):
+
+        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+                    
+        try:
+            if external_id in self.monConnLossSubId:
+                subscription = self.monConnLossSubId[external_id]
+
+                if subscription:
+                    # Delete subscription
+                    connection_subscriber.delete_subscription(self.config.NET_APP_NAME, subscription)
+                    self.log.debug(Config.LOG_NEF_SDK, "Deleting Monitor Connection subscription with ID: " + subscription)
+                    del self.monConnLossSubId[external_id]
+        except Exception as e:
+            None
+
+        try:
+            if external_id in self.monConnReachSubId:
+                subscription = self.monConnReachSubId[external_id]
+
+                if subscription:
+                    # Delete subscription
+                    connection_subscriber.delete_subscription(self.config.NET_APP_NAME, subscription)
+                    self.log.debug(Config.LOG_NEF_SDK, "Deleting Monitor Connection subscription with ID: " + subscription)
+                    del self.monConnReachSubId[external_id]
         except Exception as e:
             None
 
@@ -247,12 +388,23 @@ class ApiClient:
         self.readActiveAndDeleteLocSubscriptionsSDK()
 
         # Create monitoring event Location subscription
-        self.createMonitorEventSubsLocationSDK(externalId)
+        self.monitor_subscription(externalId)
 
-    def eventMonitorSubClientQoS(self, externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold):
+    def eventMonitorSubClientConnection(self, externalId):
 
+        # Delete active subscriptions
+        self.readActiveAndDeleteConnectionSubscriptionsSDK()
+
+        # Create monitoring event Connection Loss subscription
+        self.createMonitorEventSubsConnectionLossSDK(externalId)
+
+        # Create monitoring event Connection Reachability subscription
+        self.createMonitorEventSubsConnectionReachabilitySDK(externalId)
+
+    def eventMonitorSubClientQoS(self, externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold, qos_reporting_mode):
+        
         # Delete active subscriptions
         self.readActiveAndDeleteQosSubscriptionsSDK()
 
         # Create monitoring event QoS subscription
-        self.createMonitorEventSubsQosSDK(externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold)
+        self.sessionqos_subscription(externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold, qos_reporting_mode)

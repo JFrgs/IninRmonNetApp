@@ -30,12 +30,17 @@ class ApiCollector (threading.Thread):
         while True:
             item = self.q.get()
             self.log.debug(Config.LOG_RMON_COL, "Item in queue")
-            self.log.debug(Config.LOG_RMON_COL, f'{item}')
+            
+            #self.log.debug(Config.LOG_RMON_COL, f'{item}')
 
             event = item[0]
             external_id = item[1]
 
-            self.jsonUploadToCollector(event, external_id)
+            qos_reporting_mode = ''
+            if len(item) >= 3:
+                qos_reporting_mode = item[2]
+
+            self.jsonUploadToCollector(event, external_id, qos_reporting_mode)
 
             self.q.task_done()
 
@@ -57,10 +62,10 @@ class ApiCollector (threading.Thread):
         with open(file_name, 'w') as payload:
             json.dump(json_data, payload)
 
-    def jsonUploadToCollector(self, update_data, externalId):
+    def jsonUploadToCollector(self, update_data, externalId, qos_reporting_mode):
 
         data_json = json.loads(update_data)
-        self.log.debug(Config.LOG_RMON_COL, "Prepare JSON for UPLOAD: " + str(data_json))
+        #self.log.debug(Config.LOG_RMON_COL, "Prepare JSON for UPLOAD: " + str(data_json))
 
         # List of measurements
         data = []
@@ -71,7 +76,7 @@ class ApiCollector (threading.Thread):
         # Report event type, use in file names
         report_event_type = "unknown"
 
-        # LOCATION
+        # TYPE 1 - LOCATION
         if 'locationInfo' in data_json:
             report_event_type = "location"
 
@@ -90,6 +95,7 @@ class ApiCollector (threading.Thread):
                         'api_type': 'NEF',
                         'api_version': '1',
                         'report_type': data_json['monitoringType'],
+                        'report_mode' : 'EVENT_TRIGGERED',
                         'parameter': parameter,
                         'param_value_type': 'string',
                         'param_value_string': data_json['locationInfo'][parameter],
@@ -109,7 +115,92 @@ class ApiCollector (threading.Thread):
             except:
                 self.log.debug(Config.LOG_RMON_COL, "No location data present.")
 
-        # QoS
+        # Type 2 -  CONNECTION REACH
+        if 'UE_REACHABILITY' in str(data_json):
+            report_event_type = "connection"
+
+            try:
+                
+                timestamp = datetime.now().astimezone(pytz.timezone('CET')).replace().isoformat(timespec='milliseconds')
+
+                parameter = 'reachabilityType'
+                # Fill MN detailed JSON
+                if data_json['reachabilityType'] is None:
+                    mn_data['5G Conn Reachability Type'] = 'Unknown'
+                    data_json['reachabilityType'] = ''
+                else:
+                    mn_data['5G Conn Reachability Type'] = data_json['reachabilityType']
+
+                tmp_data = {
+                    'api_type': 'NEF',
+                    'api_version': '1',
+                    'report_type': data_json['monitoringType'],
+                    'report_mode' : 'EVENT_TRIGGERED',
+                    'parameter': parameter,
+                    'param_value_type': 'float',
+                    'param_value_string': '',
+                    'param_value_float': str(data_json['reachabilityType']),
+                    'param_value_unit': '',
+                    'timestamp': timestamp,
+                    'ue_id_type': 'External ID',
+                    'ue_id_value': externalId,
+                }
+                data.append(tmp_data)
+
+                # Put MN detailed JSON into Q
+                self.log.debug(Config.LOG_RMON_COL, "MN detailed data: " + json.dumps(mn_data))
+                external_id_list = [mn_data, externalId]
+                self.notify.q.put(external_id_list)
+                self.log.debug(Config.LOG_RMON_COL, "Put in queue")
+            except:
+                self.log.debug(Config.LOG_RMON_COL, "No connection data present.")
+
+        # Type 3 - CONNECTION LOST
+        if 'LOSS_OF_CONNECTIVITY' in str(data_json):
+            report_event_type = "connection"
+
+            try:
+                
+                timestamp = datetime.now().astimezone(pytz.timezone('CET')).replace().isoformat(timespec='milliseconds')
+
+                parameter = 'lossOfConnectReason'
+                # Fill MN detailed JSON
+                loss_con_reason = data_json['lossOfConnectReason']
+                if loss_con_reason == 6:
+                    mn_data['5G Conn Lost Reason'] = 'UE is deregistered'
+                elif loss_con_reason == 7:
+                    mn_data['5G Conn Lost Reason'] = 'UE detection timer expires'
+                elif loss_con_reason == 8:
+                    mn_data['5G Conn Lost Reason'] = 'UE is purged'
+                else:
+                    mn_data['5G Conn Lost Reason'] = data_json['lossOfConnectReason']
+
+
+                tmp_data = {
+                    'api_type': 'NEF',
+                    'api_version': '1',
+                    'report_type': data_json['monitoringType'],
+                    'report_mode' : 'EVENT_TRIGGERED',
+                    'parameter': parameter,
+                    'param_value_type': 'float',
+                    'param_value_string': '',
+                    'param_value_float': str(data_json['lossOfConnectReason']),
+                    'param_value_unit': '',
+                    'timestamp': timestamp,
+                    'ue_id_type': 'External ID',
+                    'ue_id_value': externalId,
+                }
+                data.append(tmp_data)
+
+                # Put MN detailed JSON into Q
+                self.log.debug(Config.LOG_RMON_COL, "MN detailed data: " + json.dumps(mn_data))
+                external_id_list = [mn_data, externalId]
+                self.notify.q.put(external_id_list)
+                self.log.debug(Config.LOG_RMON_COL, "Put in queue")
+            except:
+                self.log.debug(Config.LOG_RMON_COL, "No connection data present.")
+
+        # Type 4 - QoS
         if 'eventReports' in data_json:
             report_event_type = "qos"
 
@@ -126,6 +217,7 @@ class ApiCollector (threading.Thread):
                         'api_type': 'NEF',
                         'api_version': '1',
                         'report_type': parameter["event"],
+                        'report_mode' : qos_reporting_mode,
                         'parameter': "ipv4Addr",
                         'param_value_type': 'string',
                         'param_value_string': data_json["ipv4Addr"],
@@ -142,6 +234,7 @@ class ApiCollector (threading.Thread):
                         'api_type': 'NEF',
                         'api_version': '1',
                         'report_type': parameter["event"],
+                        'report_mode' : qos_reporting_mode,
                         'parameter': "appliedQosRef",
                         'param_value_type': 'string',
                         'param_value_string': str(parameter["appliedQosRef"]),
@@ -160,6 +253,7 @@ class ApiCollector (threading.Thread):
                                 'api_type': 'NEF',
                                 'api_version': '1',
                                 'report_type': parameter["event"],
+                                'report_mode' : qos_reporting_mode,
                                 'parameter': key,
                                 'param_value_type': 'float',
                                 'param_value_string': '',
@@ -186,6 +280,7 @@ class ApiCollector (threading.Thread):
                             'api_type': 'NEF',
                             'api_version': '1',
                             'report_type': parameter["event"],
+                            'report_mode' : qos_reporting_mode,
                             'parameter': key,
                             'param_value_type': 'float',
                             'param_value_string': '',
@@ -212,7 +307,7 @@ class ApiCollector (threading.Thread):
         
         file_name = '5g_nef_api_' + report_event_type + "_" + externalId.replace('@','_').replace('.com','_com') + '_' +str(datetime.now().strftime("%Y-%m-%d_%H-%M-%S")) + ".json"  
 
-        self.log.debug(Config.LOG_RMON_COL, str(json_data))
+        #self.log.debug(Config.LOG_RMON_COL, str(json_data))
 
         # Save data to JSON file
         self.saveToJsonFile(json_data, file_name)

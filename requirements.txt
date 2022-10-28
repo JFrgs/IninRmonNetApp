@@ -1,4 +1,4 @@
+setuptools-rust
 requests
-aiohttp
+aiohttp==3.8.1
 pytz
-markupsafe

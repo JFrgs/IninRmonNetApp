@@ -3,6 +3,7 @@ import json
 import requests
 import socket
 import threading
+import os
 from NetAppApiConfig import Config
 from lib.NetAppLog import NetAppLog
 from lib.NetAppApiServer import ApiServer
@@ -40,9 +41,12 @@ if __name__ == '__main__':
     netapplogger = NetAppLog(netapp_name=config.NET_APP_NAME)
     netapplogger.debug('NetApp starting ...')
 
-
     print(config.NET_API_USER)
 
     # Start API server
     apiServer = ApiServer(netapplogger, config)
-    apiServer.runServer()
+    result_server = apiServer.runServer()
+
+    if result_server == False:
+        netapplogger.debug('Exiting ... NetApp API Server not OK!')
+        os._exit(1)
