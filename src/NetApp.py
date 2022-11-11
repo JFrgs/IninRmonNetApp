@@ -30,6 +30,7 @@ if __name__ == '__main__':
     parser.add_option("-r", action="store", dest="COLLECTOR_PASS", help="Collector pass", default=Config.COLLECTOR_PASS)
     parser.add_option("-z", action="store", dest="MN_HOST", help="MN host", default=Config.MN_HOST)
     parser.add_option("-Z", action="store", dest="MN_TOKEN", help="MN token", default=Config.MN_TOKEN)
+    parser.add_option("-C", action="store", dest="CAPIF_JSON_PATH", help="CAPIF JSON", default=Config.CAPIF_JSON_PATH)
 
     (options, args) = parser.parse_args()
 

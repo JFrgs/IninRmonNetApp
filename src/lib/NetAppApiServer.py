@@ -285,8 +285,8 @@ class ApiServer:
         endpoint['name'] = 'Management'
         endpoint['url'] = path
         endpoint['status'] = False
-        endpoint['status_code'] = "-1"
-        endpoint['error'] = "-1"         
+        endpoint['status_code'] = -1
+        endpoint['error'] = -1        
         try:
             headers = {}
             headers["Authorization"] = "Bearer " + self.config.MN_TOKEN
@@ -307,8 +307,8 @@ class ApiServer:
         endpoint['name'] = 'Collector'
         endpoint['url'] = path
         endpoint['status'] = False
-        endpoint['status_code'] = "-1"
-        endpoint['error'] = "-1"    
+        endpoint['status_code'] = -1
+        endpoint['error'] = -1   
         try:
             r = requests.get(path + "/upload.php", auth=HTTPBasicAuth(self.config.COLLECTOR_USER, self.config.COLLECTOR_PASS), timeout=10)
             if r.status_code == 200:
@@ -326,8 +326,8 @@ class ApiServer:
         endpoint['name'] = 'NEF'
         endpoint['url'] = path
         endpoint['status'] = False
-        endpoint['status_code'] = "-1"
-        endpoint['error'] = "-1"     
+        endpoint['status_code'] = -1
+        endpoint['error'] = -1    
         data = {}
         data['grant_type'] = ''
         data['username'] = self.config.NET_API_USER 
@@ -345,11 +345,30 @@ class ApiServer:
             self.log.error(str(e))
         endpoints_list.append(endpoint)
 
+        # STEP 4 - CAPIF
+        endpoint = {}
+        endpoint['name'] = 'CAPIF'
+
+        endpoint['status'] = False
+        endpoint['status_code'] = -1
+        endpoint['error'] = -1 
+            
+        try:
+            path = 'http://' + self.apiClient.capif_config_json['capif_host'] + ':' + str(self.apiClient.capif_config_json['capif_http_port'])
+            endpoint['url'] = path
+
+            if self.apiClient.capif_discovery is not None:
+                endpoint['status'] = True     
+            
+        except Exception as e:
+            endpoint['error'] = str(e)
+            self.log.error(str(e))
+        endpoints_list.append(endpoint)
 
         return {'endpoints':endpoints_list}
 
     def runServer(self):
-
+        
         self.log.debug('NetApp API Server starting ...')
 
         # Check All Mandatory endpoint connections

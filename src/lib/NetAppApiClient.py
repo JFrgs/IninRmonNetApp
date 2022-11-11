@@ -9,10 +9,12 @@ from NetAppApiConfig import Config
 from evolved5g import swagger_client
 from evolved5g.swagger_client import LoginApi, User, UEsApi
 from evolved5g.swagger_client.models import Token
-from evolved5g.sdk import LocationSubscriber
 from evolved5g.swagger_client.rest import ApiException
+from evolved5g.sdk import LocationSubscriber
 from evolved5g.sdk import QosAwareness
 from evolved5g.sdk import ConnectionMonitor
+from evolved5g.sdk import ServiceDiscoverer
+from evolved5g.sdk import CAPIFInvokerConnector
 from evolved5g.swagger_client import UsageThreshold
 from evolved5g.swagger_client.api.qo_s_information_api import QoSInformationApi
 
@@ -56,6 +58,21 @@ class ApiClient:
         self.NET_API_URL     = self.config.NET_API_PROT + '://' + self.config.NET_API_HOST + ':' + self.config.NET_API_PORT
         self.url_callback    = ''
 
+        # CAPIF CONFIG JSON
+        try:
+            self.capif_config_json = self.parse_capif_config_json()
+            self.capif_path_certificates = self.capif_config_json['folder_to_store_certificates']
+            self.capif_host = self.capif_config_json['capif_host']
+            self.capif_https_port = self.capif_config_json['capif_https_port']
+        except Exception as e:
+            raise ApiError("capif config json -> " + str(e)) 
+
+        # CAPIF CONNECTOR 
+        self.capif_connector()
+
+        # CAPIF DISCOVERY 
+        self.capif_discovery = self.capif_service_discovery()
+
         # SDK
         self.configuration = swagger_client.Configuration()
         self.configuration.host = self.NET_API_URL
@@ -64,10 +81,7 @@ class ApiClient:
         if self.token == None:
             self.token, self.type = self.register_netapp_to_nef()
 
-
     def register_netapp_to_nef(self):
-        # loginNefGetTokenSDK
-        # https://github.com/EVOLVED-5G/dummy-netapp/blob/main/pythonnetapp/netapp_to_nef.py
         api_client = swagger_client.ApiClient(configuration=self.configuration)
         api_client.select_header_content_type(["application/x-www-form-urlencoded"])
         api = LoginApi(api_client)
@@ -76,11 +90,62 @@ class ApiClient:
             token = api.login_access_token_api_v1_login_access_token_post("", self.config.NET_API_USER, self.config.NET_API_PASS, "", "", "")
             self.log.debug(Config.LOG_NEF_SDK, 'Token: ' + str(token))
         except Exception as e:
-            self.log.error(Config.LOG_ERROR, str(e))
-            raise ApiError("register_netapp_to_nef -> " + str(e))
-            
+            self.log.error(Config.LOG_ERROR, str(e))     
 
         return token.access_token, token.token_type
+
+    def parse_capif_config_json(self):
+        
+        capif_json = {}
+        try:
+            with open(self.config.CAPIF_JSON_PATH, 'r') as config_file:
+                capif_json = json.load(config_file)
+                self.log.debug(Config.LOG_NET_APP, 'Capif config: ' + str(capif_json))
+        except Exception as e:
+            self.log.error(Config.LOG_ERROR, str(e))
+
+        return capif_json
+
+    def capif_connector(self):
+
+        try:
+            capif_connector = CAPIFInvokerConnector(folder_to_store_certificates=self.capif_config_json['folder_to_store_certificates'],
+                                                capif_host=self.capif_config_json['capif_host'],
+                                                capif_http_port=self.capif_config_json['capif_http_port'],
+                                                capif_https_port=self.capif_config_json['capif_https_port'],
+                                                capif_netapp_username=self.capif_config_json['capif_netapp_username'],
+                                                capif_netapp_password=self.capif_config_json['capif_netapp_password'],
+                                                capif_callback_url=self.capif_config_json['capif_callback_url'],
+                                                description=self.capif_config_json['description'],
+                                                csr_common_name=self.capif_config_json['csr_common_name'],
+                                                csr_organizational_unit=self.capif_config_json['csr_organizational_unit'],
+                                                csr_organization=self.capif_config_json['csr_organization'],
+                                                crs_locality=self.capif_config_json['crs_locality'],
+                                                csr_state_or_province_name=self.capif_config_json['csr_state_or_province_name'],
+                                                csr_country_name=self.capif_config_json['csr_country_name'],
+                                                csr_email_address=self.capif_config_json['csr_email_address'],
+                                                )
+
+            connection = capif_connector.register_and_onboard_netapp()
+            self.log.debug(Config.LOG_NET_APP, 'CAPIF connection OK!')
+        except Exception as e:
+            self.log.error(Config.LOG_ERROR, 'CAPIF connector error: ' + str(e))
+            raise ApiError("CAPIF connector error -> " + str(e)) 
+
+    def capif_service_discovery(self):
+
+        endpoints = None
+        service_discoverer = ServiceDiscoverer(folder_path_for_certificates_and_api_key=self.capif_path_certificates,
+                                                capif_host=self.capif_host,
+                                                capif_https_port=self.capif_https_port)
+        try:
+            endpoints = service_discoverer.discover_service_apis()
+            self.log.debug(Config.LOG_NET_APP, 'CAPIF endpoints: ' + str(endpoints))
+        except Exception as e:
+            self.log.error(Config.LOG_ERROR, str(e))
+            raise ApiError("CAPIF service_discoverer error -> " + str(e)) 
+
+        return endpoints
 
     def validateTokenSDK(self):
         self.configuration.access_token = self.token
@@ -109,7 +174,13 @@ class ApiClient:
         # Expire time set, 24h from now
         expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
 
-        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        connection_subscriber = ConnectionMonitor(nef_url=self.NET_API_URL, 
+                                                nef_bearer_access_token=self.token,
+                                                folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                                capif_host=self.capif_host,
+                                                capif_https_port=self.capif_https_port)
+
+
         try:
             # Create subscription   
             result = connection_subscriber.create_subscription(netapp_id=self.config.NET_APP_NAME,
@@ -142,7 +213,12 @@ class ApiClient:
         # Expire time set, 24h from now
         expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
 
-        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        connection_subscriber = ConnectionMonitor(nef_url=self.NET_API_URL, 
+                                                nef_bearer_access_token=self.token,
+                                                folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                                capif_host=self.capif_host,
+                                                capif_https_port=self.capif_https_port)
+
         try:
             # Create subscription   
             result = connection_subscriber.create_subscription(netapp_id=self.config.NET_APP_NAME,
@@ -176,7 +252,11 @@ class ApiClient:
         # Expire time set, 24h from now
         expireTime = (datetime.now() + timedelta(hours=24)).strftime('%Y-%m-%dT%H:%M:%S.%f')
 
-        location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
+        location_subscriber = LocationSubscriber(nef_url=self.NET_API_URL, 
+                                                nef_bearer_access_token=self.token,
+                                                folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                                capif_host=self.capif_host,
+                                                capif_https_port=self.capif_https_port)
         try:
             # Create subscription                                     
             result = location_subscriber.create_subscription(self.config.NET_APP_NAME,
@@ -203,7 +283,11 @@ class ApiClient:
 
     def readActiveAndDeleteQosSubscriptionsSDK(self):
 
-        qos_awereness = QosAwareness(self.NET_API_URL, self.token)
+        qos_awereness = QosAwareness(nef_url=self.NET_API_URL, 
+                                    nef_bearer_access_token=self.token,
+                                    folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                    capif_host=self.capif_host,
+                                    capif_https_port=self.capif_https_port)
 
         try:
             all_subscriptions = qos_awereness.get_all_subscriptions(self.config.NET_APP_NAME)
@@ -224,7 +308,11 @@ class ApiClient:
     def sessionqos_subscription(self, externalId, qos_reference, qos_monitoring_parameter, qos_parameter_threshold, qos_reporting_mode):
         # createMonitorEventSubsQosSDK
 
-        qos_awereness = QosAwareness(self.NET_API_URL, self.token)
+        qos_awereness = QosAwareness(nef_url=self.NET_API_URL, 
+                                    nef_bearer_access_token=self.token,
+                                    folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                    capif_host=self.capif_host,
+                                    capif_https_port=self.capif_https_port)
 
         equipment_network_identifier = self.ipv4[externalId]
         network_identifier = QosAwareness.NetworkIdentifier.IP_V4_ADDRESS
@@ -264,9 +352,6 @@ class ApiClient:
         except Exception as e:
             self.log.error(Config.LOG_ERROR, str(e))
             raise QoSSubError (str(e))
-        # except Exception as e:
-        #     self.log.error(self.configLOG_ERROR, str(e))
-        #     raise ApiError("createMonitorEventSubsQosSDK -> " +  str(e))
 
         subscription_id = subscription.link.split("/")[-1]
         self.qosSubId[externalId] = subscription_id
@@ -278,7 +363,11 @@ class ApiClient:
 
     def readActiveAndDeleteLocSubscriptionsSDK(self):
 
-        location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
+        location_subscriber = LocationSubscriber(nef_url=self.NET_API_URL, 
+                                        nef_bearer_access_token=self.token,
+                                        folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                        capif_host=self.capif_host,
+                                        capif_https_port=self.capif_https_port)
 
         try:
             # Get all subscriptions
@@ -302,7 +391,12 @@ class ApiClient:
 
     def readActiveAndDeleteConnectionSubscriptionsSDK(self):
 
-        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        connection_subscriber = ConnectionMonitor(nef_url=self.NET_API_URL, 
+                                                nef_bearer_access_token=self.token,
+                                                folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                                capif_host=self.capif_host,
+                                                capif_https_port=self.capif_https_port)
+
         try:
             # Get all subscriptions
             all_subscriptions = connection_subscriber.get_all_subscriptions(self.config.NET_APP_NAME, 0, 100)
@@ -326,7 +420,11 @@ class ApiClient:
         
     def deleteActiveMonLocSubscriptionSDK(self, external_id):
 
-        location_subscriber = LocationSubscriber(self.NET_API_URL, self.token)
+        location_subscriber = LocationSubscriber(nef_url=self.NET_API_URL, 
+                                        nef_bearer_access_token=self.token,
+                                        folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                        capif_host=self.capif_host,
+                                        capif_https_port=self.capif_https_port)
                     
         try:
             if external_id in self.monLocSubId:
@@ -342,7 +440,11 @@ class ApiClient:
 
     def deleteActiveMonConSubscriptionSDK(self, external_id):
 
-        connection_subscriber = ConnectionMonitor(self.NET_API_URL, self.token)
+        connection_subscriber = ConnectionMonitor(nef_url=self.NET_API_URL, 
+                                        nef_bearer_access_token=self.token,
+                                        folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                        capif_host=self.capif_host,
+                                        capif_https_port=self.capif_https_port)
                     
         try:
             if external_id in self.monConnLossSubId:
@@ -370,7 +472,12 @@ class ApiClient:
 
     def deleteActiveQosSubscriptionSDK(self, external_id):
 
-        qos_awereness = QosAwareness(self.NET_API_URL, self.token)
+        qos_awereness = QosAwareness(nef_url=self.NET_API_URL, 
+                                    nef_bearer_access_token=self.token,
+                                    folder_path_for_certificates_and_capif_api_key=self.capif_path_certificates,
+                                    capif_host=self.capif_host,
+                                    capif_https_port=self.capif_https_port)
+
         try:
             if external_id in self.qosSubId:
                 subscription = self.qosSubId[external_id]

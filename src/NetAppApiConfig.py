@@ -34,3 +34,6 @@ class Config:
     LOG_RMON_COL = 'rMON Collector'
     LOG_ERROR    = 'NET App Error'
     LOG_NOTIFY   = 'MN Notify'
+
+    # CAPIF JSON path
+    CAPIF_JSON_PATH = '/register.json'

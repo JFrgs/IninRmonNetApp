@@ -10,3 +10,8 @@ services:
       - "80:80"
     env_file:
       - .env
+    volumes:
+      - ./register.json:/app/register.json
+      - ./capif_onboarding:/app/capif_onboarding
+    extra_hosts:
+      capifcore: 192.168.202.35
