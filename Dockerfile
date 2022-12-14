@@ -5,9 +5,10 @@ LABEL maintainer "luka.korsic@iinstitute.eu"
 WORKDIR /app/
 COPY requirements.txt /app/
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && mkdir -p /usr/share/man/man1 && mkdir -p /usr/share/man/man7  && \
+RUN apt-get update && mkdir -p /usr/share/man/man1 && mkdir -p /usr/share/man/man7  && mkdir -p /app/capif_onboarding  && \
     apt-get -y install apt-utils git python3-dev python3-apt python3-pip python3-setuptools iputils-ping wget curl ntpdate iproute2 net-tools && \
     pip3 install -r requirements.txt
+
 
 # Install SDK
 WORKDIR /app/
