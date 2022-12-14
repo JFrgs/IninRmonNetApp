@@ -1,6 +1,8 @@
 import time
 import json
 import requests
+import random
+import string
 from requests.auth import HTTPBasicAuth
 from multiprocessing import Process
 from datetime import datetime, timedelta
@@ -55,17 +57,16 @@ class ApiClient:
         self.CALLBACK_LOC    = self.CALLBACK_PATH + 'loc/'
         self.CALLBACK_CON    = self.CALLBACK_PATH + 'con/'
         self.CALLBACK_QOS    = self.CALLBACK_PATH + 'qos/'
-        self.NET_API_URL     = self.config.NET_API_PROT + '://' + self.config.NET_API_HOST + ':' + self.config.NET_API_PORT
+        self.NET_API_URL     = self.config.NET_API_PROT + '://' + self.config.NET_API_ADDRESS
         self.url_callback    = ''
 
         # CAPIF CONFIG JSON
         try:
-            self.capif_config_json = self.parse_capif_config_json()
-            self.capif_path_certificates = self.capif_config_json['folder_to_store_certificates']
-            self.capif_host = self.capif_config_json['capif_host']
-            self.capif_https_port = self.capif_config_json['capif_https_port']
+            self.capif_path_certificates = self.config.CAPIF_PATH
+            self.capif_host = self.config.CAPIF_HOSTNAME
+            self.capif_https_port = self.config.CAPIF_PORT_HTTPS
         except Exception as e:
-            raise ApiError("capif config json -> " + str(e)) 
+            raise ApiError("capif config -> " + str(e)) 
 
         # CAPIF CONNECTOR 
         self.capif_connector()
@@ -109,21 +110,22 @@ class ApiClient:
     def capif_connector(self):
 
         try:
-            capif_connector = CAPIFInvokerConnector(folder_to_store_certificates=self.capif_config_json['folder_to_store_certificates'],
-                                                capif_host=self.capif_config_json['capif_host'],
-                                                capif_http_port=self.capif_config_json['capif_http_port'],
-                                                capif_https_port=self.capif_config_json['capif_https_port'],
-                                                capif_netapp_username=self.capif_config_json['capif_netapp_username'],
-                                                capif_netapp_password=self.capif_config_json['capif_netapp_password'],
-                                                capif_callback_url=self.capif_config_json['capif_callback_url'],
-                                                description=self.capif_config_json['description'],
-                                                csr_common_name=self.capif_config_json['csr_common_name'],
-                                                csr_organizational_unit=self.capif_config_json['csr_organizational_unit'],
-                                                csr_organization=self.capif_config_json['csr_organization'],
-                                                crs_locality=self.capif_config_json['crs_locality'],
-                                                csr_state_or_province_name=self.capif_config_json['csr_state_or_province_name'],
-                                                csr_country_name=self.capif_config_json['csr_country_name'],
-                                                csr_email_address=self.capif_config_json['csr_email_address'],
+            capif_connector = CAPIFInvokerConnector(
+                                                folder_to_store_certificates=self.config.CAPIF_PATH,
+                                                capif_host=self.config.CAPIF_HOSTNAME,
+                                                capif_http_port=int(self.config.CAPIF_PORT_HTTP),
+                                                capif_https_port=int(self.config.CAPIF_PORT_HTTPS),
+                                                capif_netapp_username=self.generate_user_pass(),
+                                                capif_netapp_password=self.generate_user_pass(),
+                                                capif_callback_url="http://localhost:5000",
+                                                description= "test_app_description",
+                                                csr_common_name="test_app_common_name",
+                                                csr_organizational_unit="test_app_ou",
+                                                csr_organization="test_app_o",
+                                                crs_locality="Ljubljana",
+                                                csr_state_or_province_name="Ljubljana",
+                                                csr_country_name="SI",
+                                                csr_email_address="test@example.com",
                                                 )
 
             connection = capif_connector.register_and_onboard_netapp()
@@ -131,6 +133,10 @@ class ApiClient:
         except Exception as e:
             self.log.error(Config.LOG_ERROR, 'CAPIF connector error: ' + str(e))
             raise ApiError("CAPIF connector error -> " + str(e)) 
+
+    def generate_user_pass(self):
+        letters = string.ascii_lowercase
+        return ''.join(random.choice(letters) for i in range(10))
 
     def capif_service_discovery(self):
 
@@ -168,7 +174,7 @@ class ApiClient:
     def createMonitorEventSubsConnectionLossSDK(self, externalId):
 
         # Callback Monitor Location URL
-        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_CON + externalId
+        url_callback = 'http://' + self.config.CALLBACK_ADDRESS + self.CALLBACK_CON + externalId
         self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Connection URL: ' + url_callback)
 
         # Expire time set, 24h from now
@@ -207,7 +213,7 @@ class ApiClient:
     def createMonitorEventSubsConnectionReachabilitySDK(self, externalId):
 
         # Callback Monitor Location URL
-        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_CON + externalId
+        url_callback = 'http://' + self.config.CALLBACK_ADDRESS + self.CALLBACK_CON + externalId
         self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Connection URL: ' + url_callback)
 
         # Expire time set, 24h from now
@@ -246,7 +252,7 @@ class ApiClient:
         # createMonitorEventSubsLocationSDK
 
         # Callback Monitor Location URL
-        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_LOC + externalId
+        url_callback = 'http://' + self.config.CALLBACK_ADDRESS + self.CALLBACK_LOC + externalId
         self.log.debug(Config.LOG_NET_APP, 'Callback Monitor Location URL: ' + url_callback)
 
         # Expire time set, 24h from now
@@ -329,7 +335,7 @@ class ApiClient:
             reporting_mode = QosAwareness.PeriodicReportConfiguration(repetition_period_in_seconds=10)
 
 
-        url_callback = 'http://' + self.config.CALLBACK_HOST + ':' + self.config.CALLBACK_PORT + self.CALLBACK_QOS + externalId
+        url_callback = 'http://' + self.config.CALLBACK_ADDRESS + self.CALLBACK_QOS + externalId
 
         try:
             self.log.debug(Config.LOG_NEF_SDK, 'Create guaranteed bit rate subscription')

@@ -321,7 +321,7 @@ class ApiServer:
         endpoints_list.append(endpoint)
 
         # STEP 3 - NEF
-        path = self.config.NET_API_PROT + '://' + self.config.NET_API_HOST + ':' + self.config.NET_API_PORT + '/api/v1/login/access-token'
+        path = self.config.NET_API_PROT + '://' + self.config.NET_API_ADDRESS + '/api/v1/login/access-token'
         endpoint = {}
         endpoint['name'] = 'NEF'
         endpoint['url'] = path
@@ -354,7 +354,7 @@ class ApiServer:
         endpoint['error'] = -1 
             
         try:
-            path = 'http://' + self.apiClient.capif_config_json['capif_host'] + ':' + str(self.apiClient.capif_config_json['capif_http_port'])
+            path = 'http://' + self.config.CAPIF_HOSTNAME + ':' + str(self.config.CAPIF_PORT_HTTP)
             endpoint['url'] = path
 
             if self.apiClient.capif_discovery is not None:
