@@ -117,7 +117,7 @@ class ApiClient:
                                                 capif_https_port=int(self.config.CAPIF_PORT_HTTPS),
                                                 capif_netapp_username=self.generate_user_pass(),
                                                 capif_netapp_password=self.generate_user_pass(),
-                                                capif_callback_url="http://localhost:5000",
+                                                capif_callback_url=self.config.CAPIF_CALLBACK_ADDRESS,
                                                 description= "test_app_description",
                                                 csr_common_name="test_app_common_name",
                                                 csr_organizational_unit="test_app_ou",

@@ -1,4 +1,5 @@
 setuptools-rust
-requests
+requests==2.26.0
 aiohttp==3.8.1
-pytz
+pytz==2021.3
+MarkupSafe==1.1.0

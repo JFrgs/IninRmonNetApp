@@ -38,6 +38,7 @@ class Config:
     CAPIF_HOSTNAME = 'capifcore'
     CAPIF_PORT_HTTP = 8080
     CAPIF_PORT_HTTPS = 443
+    CAPIF_CALLBACK_ADDRESS = 'http://localhost:5000'
 
 """
 class Config:
