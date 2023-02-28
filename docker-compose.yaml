@@ -11,4 +11,5 @@ services:
     env_file:
       - .env
     extra_hosts:
-      capifcore: 192.168.202.35
+#      capifcore: 192.168.202.35
+       capifcore: 10.161.1.117
